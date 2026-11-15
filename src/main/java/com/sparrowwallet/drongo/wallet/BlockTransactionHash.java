@@ -37,12 +37,24 @@ public abstract class BlockTransactionHash extends Persistable {
     }
 
     /**
-     * Calculates a special height value that places txes with unconfirmed parents first, then normal unconfirmed txes, then confirmed txes
+     * Calculates a special height value that, in ascending order, places confirmed txes first, then normal unconfirmed txes, then txes with unconfirmed parents
      *
+     * @param height the block height, 0 for an unconfirmed tx or -1 for a tx with unconfirmed parents
      * @return the modified height value
      */
-    public int getComparisonHeight() {
-        return (getHeight() > 0 ? getHeight() : (getHeight() == -1 ? Integer.MAX_VALUE : Integer.MAX_VALUE - getHeight() - 1));
+    private static long getComparisonHeight(int height) {
+        return (height > 0 ? height : (height == -1 ? Integer.MAX_VALUE : (long)Integer.MAX_VALUE - height - 1));
+    }
+
+    /**
+     * Orders by comparison height, falling back to the height itself so that references at different heights never compare as equal
+     *
+     * @param reference the reference to compare against
+     * @return the height order of this reference relative to the given reference
+     */
+    public int compareHeight(BlockTransactionHash reference) {
+        int order = Long.compare(getComparisonHeight(getHeight()), getComparisonHeight(reference.getHeight()));
+        return order != 0 ? order : Integer.compare(getHeight(), reference.getHeight());
     }
 
     public int getConfirmations(int currentBlockHeight) {
@@ -50,7 +62,8 @@ public abstract class BlockTransactionHash extends Persistable {
             return 0;
         }
 
-        return Math.max(1, currentBlockHeight - height + 1);
+        //A block above the current tip is not in the chain being followed, so a transaction recorded there has no confirmations until its history is refreshed
+        return Math.max(0, currentBlockHeight - height + 1);
     }
 
     public Date getDate() {
@@ -76,9 +89,13 @@ public abstract class BlockTransactionHash extends Persistable {
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        BlockTransactionHash that = (BlockTransactionHash) o;
+        if(this == o) {
+            return true;
+        }
+        if(o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        BlockTransactionHash that = (BlockTransactionHash)o;
         return hash.equals(that.hash) && height == that.height;
     }
 
@@ -89,7 +106,7 @@ public abstract class BlockTransactionHash extends Persistable {
 
     public int compareTo(BlockTransactionHash reference) {
         if(height != reference.height) {
-            return getComparisonHeight() - reference.getComparisonHeight();
+            return compareHeight(reference);
         }
 
         return hash.compareTo(reference.hash);
