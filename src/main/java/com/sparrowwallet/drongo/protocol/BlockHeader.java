@@ -2,6 +2,7 @@ package com.sparrowwallet.drongo.protocol;
 
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.Utils;
+import org.bouncycastle.crypto.generators.SCrypt;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -85,6 +86,11 @@ public class BlockHeader extends Message {
         return Sha256Hash.wrapReversed(Sha256Hash.hashTwice(bitcoinSerialize()));
     }
 
+    public Sha256Hash getPoWHash() {
+        byte[] hdr = bitcoinSerialize();
+        return Sha256Hash.wrapReversed(SCrypt.generate(hdr, hdr, 1024, 1, 1, 32));
+    }
+
     public BigInteger getDifficultyTargetAsInteger() {
         return Utils.decodeCompactBits(difficultyTarget);
     }
@@ -98,7 +104,7 @@ public class BlockHeader extends Message {
             return false;
         }
 
-        return getHash().toBigInteger().compareTo(target) <= 0;
+        return getPoWHash().toBigInteger().compareTo(target) <= 0;
     }
 
     public byte[] bitcoinSerialize() {

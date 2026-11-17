@@ -28,11 +28,13 @@ public class HeaderCheckpoints {
     private final Network network;
     private final List<Sha256Hash> hashes;      //index k = hash at height 2016k + 2015
     private final List<Long> bits;              //index k = required compact target for period k + 1
+    private final List<Long> timestamps;        //index k = timestamp at height 2016k + 2015
 
-    private HeaderCheckpoints(Network network, List<Sha256Hash> hashes, List<Long> bits) {
+    private HeaderCheckpoints(Network network, List<Sha256Hash> hashes, List<Long> bits, List<Long> timestamps) {
         this.network = network;
         this.hashes = hashes;
         this.bits = bits;
+        this.timestamps = timestamps;
     }
 
     /** The checkpoints for the given network, parsed from its resource on first use and cached. Regtest has none. */
@@ -42,7 +44,7 @@ public class HeaderCheckpoints {
 
     private static HeaderCheckpoints load(Network network) {
         if(network == Network.REGTEST) {
-            return new HeaderCheckpoints(network, Collections.emptyList(), Collections.emptyList());
+            return new HeaderCheckpoints(network, Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
         }
 
         String resource = CHECKPOINTS_RESOURCE_DIR + network.getName() + ".txt";
@@ -60,6 +62,7 @@ public class HeaderCheckpoints {
     static HeaderCheckpoints parse(Network network, InputStream inputStream) throws IOException {
         List<Sha256Hash> hashes = new ArrayList<>();
         List<Long> bits = new ArrayList<>();
+        List<Long> timestamps = new ArrayList<>();
         BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
         String line;
         int lineNumber = 0;
@@ -70,15 +73,16 @@ public class HeaderCheckpoints {
             }
 
             String[] parts = line.split(" ");
-            if(parts.length != 2 || parts[0].length() != 64 || parts[1].length() != 8) {
+            if(parts.length != 3 || parts[0].length() != 64 || parts[1].length() != 8 || parts[2].length() != 10) {
                 throw new IllegalStateException("Malformed checkpoint for " + network + " at line " + lineNumber + ": " + line);
             }
 
-            long compactBits;
+            long compactBits, timestamp;
             Sha256Hash hash;
             try {
                 hash = Sha256Hash.wrap(parts[0]);
                 compactBits = Long.parseLong(parts[1], 16);
+                timestamp = Long.parseLong(parts[2]);
             } catch(IllegalArgumentException | ProtocolException e) {
                 throw new IllegalStateException("Malformed checkpoint for " + network + " at line " + lineNumber + ": " + line, e);
             }
@@ -90,13 +94,14 @@ public class HeaderCheckpoints {
 
             hashes.add(hash);
             bits.add(compactBits);
+            timestamps.add(timestamp);
         }
 
         if(hashes.isEmpty()) {
             throw new IllegalStateException("No checkpoints found for " + network);
         }
 
-        return new HeaderCheckpoints(network, List.copyOf(hashes), List.copyOf(bits));
+        return new HeaderCheckpoints(network, List.copyOf(hashes), List.copyOf(bits), List.copyOf(timestamps));
     }
 
     /** The height of the last pinned header, or 0 for regtest (genesis, whose hash is Network.getGenesisHash()). */
@@ -152,6 +157,6 @@ public class HeaderCheckpoints {
     public HeaderChainState newChainState() {
         int maxHeight = getMaxHeight();
 
-        return new HeaderChainState(maxHeight, getHash(maxHeight), getBitsAfter(maxHeight));
+        return new HeaderChainState(maxHeight, getHash(maxHeight), getBitsAfter(maxHeight), timestamps.getLast());
     }
 }

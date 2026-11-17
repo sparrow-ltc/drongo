@@ -22,7 +22,7 @@ import java.util.List;
  */
 public class HeaderChainState {
     public static final int RETARGET_INTERVAL = 2016;
-    public static final int TARGET_TIMESPAN_SECS = 14 * 24 * 60 * 60;
+    public static final int TARGET_TIMESPAN_SECS = 84 * 60 * 60;
     private static final int MEDIAN_TIME_SPAN = 11;
     private static final long NO_RETARGET_TIME = -1;
 
@@ -40,7 +40,7 @@ public class HeaderChainState {
      * anchors at its genesis header instead; a height 0 anchor on a network with the full difficulty rules cannot reach a retarget, because
      * genesis is the first header of its period rather than the last and so no period start is ever observed.
      */
-    public HeaderChainState(int height, Sha256Hash hash, long nextBits) {
+    public HeaderChainState(int height, Sha256Hash hash, long nextBits, long timestamp) {
         if((height + 1) % RETARGET_INTERVAL != 0 && height != 0) {
             throw new IllegalArgumentException("Anchor height " + height + " is not the last header of a difficulty period");
         }
@@ -50,6 +50,7 @@ public class HeaderChainState {
         this.hash = hash;
         this.nextBits = nextBits;
         this.chainWork = BigInteger.ZERO;
+        this.recentTimes.addLast(timestamp);
     }
 
     public synchronized void add(BlockHeader header) throws VerificationException {
@@ -71,7 +72,7 @@ public class HeaderChainState {
         height++;
         hash = header.getHash();
         if(height % RETARGET_INTERVAL == 0) {
-            lastRetargetTime = header.getTime();
+            lastRetargetTime = getLastTime();
         }
         nextBits = header.getDifficultyTarget();
         chainWork = chainWork.add(isFullDifficultyRules() ? getWork(header.getDifficultyTarget()) : BigInteger.ONE);
