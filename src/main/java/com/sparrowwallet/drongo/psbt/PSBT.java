@@ -704,7 +704,7 @@ public class PSBT {
         //since some implementations write a four byte value here rather than the compact size uint BIP370 specifies. The two forms
         //coincide below 253 only - above that this reads the leading byte of the four byte form, and the map count check rejects it.
         VarInt varIntCount = new VarInt(Arrays.copyOf(entry.getData(), 9), 0);
-        if(varIntCount.value < 1) {
+        if(varIntCount.value < 0) {
             throw new PSBTParseException("PSBT " + type + " count must be at least one");
         }
 
