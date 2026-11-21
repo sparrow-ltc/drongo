@@ -14,7 +14,7 @@ public enum Network {
     TESTNET("testnet", "Testnet", "testnet", 111, "mn", 58, "Q", "tltc", "tltcsp", "tltcspscan", "tltcspspend", "tmweb", ExtendedKey.Header.tprv, ExtendedKey.Header.tpub, 191, 19332),
     REGTEST("regtest", "Regtest", "regtest", 111, "mn", 196, "2", "rltc", "rltcsp", "rltcspscan", "rltcspspend", "tmweb", ExtendedKey.Header.tprv, ExtendedKey.Header.tpub, 239, 19443),
     SIGNET("signet", "Signet", "signet", 111, "mn", 196, "2", "tb", "tsp", "tspscan", "tspspend", "tmweb", ExtendedKey.Header.tprv, ExtendedKey.Header.tpub, 239, 38332),
-    TESTNET4("testnet4", "Testnet4", "testnet4", 111, "mn", 196, "2", "tb", "tsp", "tspscan", "tspspend", "tmweb", ExtendedKey.Header.tprv, ExtendedKey.Header.tpub, 239, 48332);
+    TESTNET4("testnet4", "Testnet4", "testnet4", 111, "mn", 196, "2", "tb", "tsp", "tspscan", "tspspend", "tmweb", ExtendedKey.Header.tprv, ExtendedKey.Header.tpub, 239, 48332),
     TESTNET5("testnet5", "Testnet5", "testnet5", 111, "mn", 196, "2", "tb", "tsp", "tspscan", "tspspend", "tmweb", ExtendedKey.Header.tprv, ExtendedKey.Header.tpub, 239, 18352);
 
     public static final String BLOCK_HEIGHT_PROPERTY = "com.sparrowwallet.blockHeight";
