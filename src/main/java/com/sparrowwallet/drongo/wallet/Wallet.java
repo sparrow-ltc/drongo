@@ -1162,14 +1162,12 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
             throw new InsufficientFundsException("Not enough combined value in all available UTXOs to send a transaction to send the provided payments at the user set fee" + (params.fee() == null ? " rate" : ""));
         }
 
-        long noChangeFeeIncrease = 0;
-        long changeFeeIncrease = 0;
-
         while(true) {
             List<Map<BlockTransactionHashIndex, WalletNode>> selectedUtxoSets = selectInputSets(params, availableTxos, valueRequiredAmt);
             Map<BlockTransactionHashIndex, WalletNode> selectedUtxos = new LinkedHashMap<>();
             selectedUtxoSets.forEach(selectedUtxos::putAll);
             long totalSelectedAmt = selectedUtxos.keySet().stream().mapToLong(BlockTransactionHashIndex::getValue).sum();
+            if(scriptType == MWEB) selectedUtxoSets = List.of(selectedUtxos);
             int numSets = selectedUtxoSets.size();
             List<Payment> txPayments = new ArrayList<>(params.payments());
             List<WalletTransaction.Output> outputs = new ArrayList<>();
@@ -1232,11 +1230,12 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                 outputs.add(new WalletTransaction.NonAddressOutput(output));
             }
 
-            if(scriptType == MWEB && params.getFirstSendMaxPayment().isPresent() &&
-                    txPayments.stream().noneMatch(payment -> payment instanceof WalletNodePayment)) {
+            var needMwebChange = scriptType == MWEB && txPayments.stream().noneMatch(payment -> payment instanceof WalletNodePayment);
+            if(needMwebChange && params.getFirstSendMaxPayment().isPresent()) {
                 var node = getFreshNode(getChangeKeyPurpose());
                 var output = transaction.addOutput(0, node.getOutputScript());
                 outputs.add(new WalletTransaction.ChangeOutput(output, node, 0L));
+                needMwebChange = false;
             }
 
             double noChangeVSize = WalletTransaction.getVirtualSize(transaction, outputs);
@@ -1247,8 +1246,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                 noChangeFeeRequiredAmt++;
             }
 
-            noChangeFeeIncrease += params.feeEstimator().calcFeeIncrease(this, selectedUtxos, outputs, noChangeVSize, params.feeRate());
-            noChangeFeeRequiredAmt += noChangeFeeIncrease;
+            noChangeFeeRequiredAmt = params.feeEstimator().calcFee(this, selectedUtxos, outputs, params.feeRate());
 
             //If sending all selected utxos, set the recipient amount to equal to total of those utxos less the no change fee
             long maxSendAmt = totalSelectedAmt - noChangeFeeRequiredAmt;
@@ -1285,7 +1283,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
             long costOfChangeAmt = getCostOfChange(noChangeFeeRate, params.longTermFeeRate());
             long dustThresholdAmt = getDustThreshold(changeOutput, Transaction.DUST_RELAY_TX_FEE);
             long minChangeAmt = Math.max(costOfChangeAmt, dustThresholdAmt);
-            if(setChangeAmts.stream().allMatch(amt -> amt > minChangeAmt) || (numSets > 1 && differenceAmt / noChangeVSize > noChangeFeeRate * 2)) {
+            if(needMwebChange || setChangeAmts.stream().allMatch(amt -> amt > minChangeAmt) || (numSets > 1 && differenceAmt / noChangeVSize > noChangeFeeRate * 2)) {
                 //Change output is required, determine new fee once change output has been added
                 double changeVSize = noChangeVSize + changeOutput.getLength() * numSets;
                 long changeFeeRequiredAmt = params.getRequiredFeeAmount(changeVSize);
@@ -1295,7 +1293,14 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                 while(changeFeeRequiredAmt % numSets > 0) {
                     changeFeeRequiredAmt++;
                 }
-                changeFeeRequiredAmt += changeFeeIncrease;
+
+                WalletNode changeNode = getFreshNode(getChangeKeyPurpose());
+                var outputs2 = new ArrayList<>(outputs);
+                for(Long setChangeAmt : setChangeAmts) {
+                    var output = new TransactionOutput(null, setChangeAmt, changeNode.getOutputScript());
+                    outputs2.add(new WalletTransaction.ChangeOutput(output, changeNode, setChangeAmt));
+                }
+                changeFeeRequiredAmt = params.feeEstimator().calcFee(this, selectedUtxos, outputs2, params.feeRate());
 
                 //Add change output(s)
                 Map<WalletNode, Long> changeMap = new LinkedHashMap<>();
@@ -1308,7 +1313,6 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                         outputs.add(new WalletTransaction.SilentPaymentChangeOutput(output, changeSilentPayment));
                     }
                 } else {
-                    WalletNode changeNode = getFreshNode(getChangeKeyPurpose());
                     while(txExcludedChangeNodes.contains(changeNode)) {
                         changeNode = getFreshNode(getChangeKeyPurpose(), changeNode);
                     }
@@ -1320,10 +1324,6 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                     }
                 }
 
-                var feeIncrease = params.feeEstimator().calcFeeIncrease(this, selectedUtxos, outputs, changeVSize, params.feeRate());
-                changeFeeIncrease += feeIncrease;
-                if(feeIncrease > 0) continue;
-
                 if(setChangeAmts.stream().anyMatch(amt -> amt < minChangeAmt)) {
                     //The new fee has meant that one of the change outputs is now dust. We pay too high a fee without change, but change is dust when added.
                     //Recomputed rather than reusing noChangeVSize above, the change outputs having since been added
@@ -1333,7 +1333,13 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                     } else {
                         //Maxmize efficiency. Increase value required from inputs and try again.
                         valueRequiredAmt = totalSelectedAmt + 1;
-                        continue;
+                        try {
+                            if(setChangeAmts.stream().noneMatch(amt -> amt < 0)) {
+                                selectInputSets(params, availableTxos, valueRequiredAmt);
+                            }
+                            continue;
+                        } catch(InsufficientFundsException _) {
+                        }
                     }
                 }
 
