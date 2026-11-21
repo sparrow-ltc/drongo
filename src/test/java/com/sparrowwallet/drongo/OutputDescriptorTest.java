@@ -136,6 +136,38 @@ public class OutputDescriptorTest {
     }
 
     @Test
+    public void testIncompleteMultisigRejected() {
+        String truncated = "wsh(sortedmulti(2," + MULTI_KEY_1 + "," + MULTI_KEY_2 + "?," + MULTI_KEY_3 + "))";
+        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor(OutputDescriptor.normalize(truncated)));
+        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor("wsh(sortedmulti(2," + MULTI_KEY_1 + "," + MULTI_KEY_2));
+        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor(multisigDescriptor("sortedmulti", "2") + "?x"));
+    }
+
+    @Test
+    public void testMultisigKeysCounted() {
+        String pubKey = "02e6642fd69bd211f93f7f1f36ca51a26a5290eb2dd1b0d8279a87bb0d480c8443";
+        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor("wsh(sortedmulti(2," + MULTI_KEY_1 + "," + MULTI_KEY_2 + "," + pubKey + "))"));
+        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor("wsh(sortedmulti(2," + MULTI_KEY_1 + "," + MULTI_KEY_2 + "," + MULTI_KEY_2 + "))"));
+    }
+
+    @Test
+    public void testScriptExpressionsRejected() {
+        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor(
+                "wsh(or_d(multi(2," + MULTI_KEY_1 + "," + MULTI_KEY_2 + "),and_v(v:pkh(" + MULTI_KEY_3 + "),older(52560))))"));
+        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor(
+                "wsh(andor(multi(1," + MULTI_KEY_1 + "),older(1000),multi(2," + MULTI_KEY_2 + "," + MULTI_KEY_3 + ")))"));
+        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor(multisigDescriptor("sortedmulti", "2") + " text"));
+    }
+
+    @Test
+    public void testSupportedDescriptorForms() {
+        Assertions.assertEquals(3, OutputDescriptor.getOutputDescriptor("sh(wsh(sortedmulti(2, " + MULTI_KEY_1 + ", " + MULTI_KEY_2 + ", " + MULTI_KEY_3 + ")))").getExtendedPublicKeys().size());
+        Assertions.assertEquals(1, OutputDescriptor.getOutputDescriptor("wpkh(" + MULTI_KEY_1 + ")").getExtendedPublicKeys().size());
+        Assertions.assertEquals(1, OutputDescriptor.getOutputDescriptor("sh(" + MULTI_KEY_1 + ")").getExtendedPublicKeys().size());
+        Assertions.assertEquals(2, OutputDescriptor.getOutputDescriptor(multisigDescriptor("sortedmulti", "2") + "?birth=850000&gap=100").getMultisigThreshold());
+    }
+
+    @Test
     public void testMultisigThresholdNeverDefaulted() {
         //A descriptor providing multiple keys but no recognisable threshold must be rejected, not silently downgraded to 1 of n
         IllegalArgumentException e = Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor(
@@ -575,5 +607,42 @@ public class OutputDescriptorTest {
         OutputDescriptor template = OutputDescriptor.getOutputDescriptor(p2shP2wsh.replace("/0/0", "/**"));
         Assertions.assertEquals(p2shP2wshDescriptor.getAddress(p2shP2wshDescriptor.getChildDerivation()),
                 template.toWallet().getNode(KeyPurpose.RECEIVE).getChildren().iterator().next().getAddress());
+    }
+
+    private static final String STANDARD_TEST_XPUB = "xpub68Gmy5EdvgibQVfPdqkBBCHxA5htiqg55crXYuXoQRKfDBFA1WEjWgP6LHhwBZeNK1VTsfTFUHCdrfp1bgwQ9xv5ski8PX9rL2dZXvgGDnw";
+    private static final String OTHER_TEST_XPUB = "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8";
+
+    @Test
+    public void standardChildDerivations() {
+        for(String child : new String[] {"/<0;1>/*", "/0/*", "/1/*", "", "/2/0/*"}) {
+            OutputDescriptor descriptor = OutputDescriptor.getOutputDescriptor("wpkh([3442193e/84'/0'/0']" + STANDARD_TEST_XPUB + child + ")");
+            Assertions.assertTrue(descriptor.hasStandardChildDerivations(), child);
+            descriptor.verifyStandardChildDerivations();
+        }
+
+        OutputDescriptor multisig = OutputDescriptor.getOutputDescriptor("wsh(sortedmulti(1,[3442193e/48'/0'/0'/2']" + STANDARD_TEST_XPUB + "/<0;1>/*,"
+                + "[d34db33f/48'/0'/0'/2']" + OTHER_TEST_XPUB + "/0/*))");
+        Assertions.assertTrue(multisig.hasStandardChildDerivations());
+    }
+
+    @Test
+    public void nonStandardChildDerivations() {
+        for(String child : new String[] {"/2/*", "/<1;0>/*", "/<0;1>/0/*", "/*", "/0h/*"}) {
+            OutputDescriptor descriptor = OutputDescriptor.getOutputDescriptor("wpkh([3442193e/84'/0'/0']" + STANDARD_TEST_XPUB + child + ")");
+            Assertions.assertFalse(descriptor.hasStandardChildDerivations(), child);
+            Assertions.assertThrows(IllegalStateException.class, descriptor::verifyStandardChildDerivations);
+        }
+
+        OutputDescriptor mixed = OutputDescriptor.getOutputDescriptor("wsh(sortedmulti(1,[3442193e/48'/0'/0'/2']" + STANDARD_TEST_XPUB + "/0/*,"
+                + "[d34db33f/48'/0'/0'/2']" + OTHER_TEST_XPUB + "/1/*))");
+        Assertions.assertFalse(mixed.hasStandardChildDerivations());
+    }
+
+    @Test
+    public void multipathAboveTheChainIsNotFoldedIntoTheKey() {
+        OutputDescriptor descriptor = OutputDescriptor.getOutputDescriptor("wpkh([3442193e/84'/0'/0']" + STANDARD_TEST_XPUB + "/<0;1>/0/*)");
+        ExtendedKey key = descriptor.getExtendedPublicKeys().iterator().next();
+        Assertions.assertEquals(STANDARD_TEST_XPUB, key.toString());
+        Assertions.assertEquals("m/84'/0'/0'", descriptor.getKeyDerivation(key).getDerivationPath());
     }
 }

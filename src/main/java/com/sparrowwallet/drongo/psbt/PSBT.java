@@ -1405,6 +1405,8 @@ public class PSBT {
             psbtOutput.setSilentPaymentAddress(null);
             psbtOutput.setSilentPaymentLabel(null);
             psbtOutput.setDnssecProof(null);
+            psbtOutput.setRedeemScript(null);
+            psbtOutput.setWitnessScript(null);
         }
 
         return publicCopy;

@@ -1281,6 +1281,25 @@ public class PSBTTest {
     }
 
     @Test
+    public void publicCopyClearsOutputScripts() throws PSBTParseException {
+        Script redeemScript = new Script(Utils.hexToBytes("0020d85c2b71d0060b09c9886aeb815e50991dda124dd85c2b71d0060b09c9886aeb"));
+        Script witnessScript = new Script(Utils.hexToBytes("5121030000000000000000000000000000000000000000000000000000000000000001" + "51ae"));
+        Transaction transaction = new Transaction();
+        transaction.addInput(Sha256Hash.ZERO_HASH, 0, new Script(new byte[0]));
+        transaction.addOutput(100000L, ScriptType.P2SH.getOutputScript(redeemScript));
+
+        PSBT psbt = new PSBT(transaction);
+        psbt.getPsbtOutputs().getFirst().setRedeemScript(redeemScript);
+        psbt.getPsbtOutputs().getFirst().setWitnessScript(witnessScript);
+
+        PSBT publicCopy = PSBT.fromString(psbt.getPublicCopy().toBase64String());
+        Assertions.assertNull(publicCopy.getPsbtOutputs().getFirst().getRedeemScript());
+        Assertions.assertNull(publicCopy.getPsbtOutputs().getFirst().getWitnessScript());
+        Assertions.assertNotNull(psbt.getPsbtOutputs().getFirst().getRedeemScript());
+        Assertions.assertNotNull(psbt.getPsbtOutputs().getFirst().getWitnessScript());
+    }
+
+    @Test
     public void publicCopyClearsOutputSilentPaymentInfo() throws PSBTParseException {
         String strPsbt = "cHNidP8B+wQCAAAAAQIEAgAAAAEEBAEAAAABBQQCAAAAAQYBAwABDiAlbK6m2hWAb7hW7a50mI1EDHqxtcCGHsgR0ZCSdHudHAEPBAAAAAABAR+ghgEAAAAAABYAFPja92rYA7DvqV1s/4ruCJHTrxyMARAE/v///yIGA9NX98BxjyR44/2PjMwnKd3YwMyusfArGBpvRNQ7n42NAAEDBAEAAAAiHQLQKf+W3iy894K+Q1nEhiDqkrzda+8DK5UVi5GhaT+0+CECVRZOeSbVDVKgn/mQZHpelcHbG/xophb7wtohOSf5i/8iHgLQKf+W3iy894K+Q1nEhiDqkrzda+8DK5UVi5GhaT+0+EDB1n84eIK/gXkV6hWCHWTVs4NcH8BcVYzj2CSSoX2QjBBIfbub3cEIDIwtnBlxsmYIPGkFTiIZPyRBKKxmc35gAAEDCFDDAAAAAAAAAQQiUSBVuRZLw33Ib1uJNhaCqjCItbP6U9rbQ+lfG9ETm7HANQEJQgLQKf+W3iy894K+Q1nEhiDqkrzda+8DK5UVi5GhaT+0+AP1JENIUgFlZrxF0fpqXFoYYs3ZM/FchDtCcjgi9SUyNwEKBAEAAAAAAQMIyK8AAAAAAAABBBYAFOPDEMwq86xuYsrkvSPj7lK54clZIgID01f3wHGPJHjj/Y+MzCcp3djAzK6x8CsYGm9E1DufjY0MAAAAAAAAAAAAAAABAA==";
         PSBT psbt = PSBT.fromString(strPsbt);
@@ -1423,6 +1442,55 @@ public class PSBTTest {
 
         IllegalStateException thrown = Assertions.assertThrows(IllegalStateException.class, () -> trapInput.sign(key));
         Assertions.assertTrue(thrown.getMessage().startsWith("Refusing to sign SIGHASH_SINGLE on input 1"));
+    }
+
+    @Test
+    public void silentPaymentOutputRequiresSighashAll() throws Exception {
+        ECKey key = new ECKey();
+        Script spk = ScriptType.P2WPKH.getOutputScript(key.getPubKeyHash());
+
+        Transaction priorTx = new Transaction();
+        priorTx.addInput(Sha256Hash.ZERO_HASH, 0L, new Script(new byte[0]));
+        priorTx.addOutput(200_000L, spk);
+
+        Transaction unsigned = new Transaction();
+        unsigned.addInput(priorTx.getTxId(), 0, new Script(new byte[0]));
+        unsigned.addOutput(190_000L, spk);
+
+        PSBT psbt = new PSBT(unsigned);
+        psbt.getPsbtOutputs().getFirst().setSilentPaymentAddress(SilentPaymentAddress.from("sp1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqjuexzk6murw56suy3e0rd2cgqvycxttddwsvgxe2usfpxumr70xc9pkqwv"));
+        PSBTInput psbtInput = psbt.getPsbtInputs().getFirst();
+        psbtInput.setWitnessUtxo(priorTx.getOutputs().getFirst());
+        psbtInput.setSigHash(SigHash.NONE);
+
+        IllegalStateException thrown = Assertions.assertThrows(IllegalStateException.class, () -> psbtInput.sign(key));
+        Assertions.assertTrue(thrown.getMessage().startsWith("Silent payment outputs require SIGHASH_ALL/DEFAULT signatures"));
+        Assertions.assertTrue(psbtInput.getPartialSignatures().isEmpty());
+
+        psbtInput.setSigHash(SigHash.ALL);
+        Assertions.assertTrue(psbtInput.sign(key));
+        Assertions.assertDoesNotThrow(psbtInput::verifySignatures);
+    }
+
+    @Test
+    public void sighashNoneSignsWithoutSilentPaymentOutput() {
+        ECKey key = new ECKey();
+        Script spk = ScriptType.P2WPKH.getOutputScript(key.getPubKeyHash());
+
+        Transaction priorTx = new Transaction();
+        priorTx.addInput(Sha256Hash.ZERO_HASH, 0L, new Script(new byte[0]));
+        priorTx.addOutput(200_000L, spk);
+
+        Transaction unsigned = new Transaction();
+        unsigned.addInput(priorTx.getTxId(), 0, new Script(new byte[0]));
+        unsigned.addOutput(190_000L, spk);
+
+        PSBT psbt = new PSBT(unsigned);
+        PSBTInput psbtInput = psbt.getPsbtInputs().getFirst();
+        psbtInput.setWitnessUtxo(priorTx.getOutputs().getFirst());
+        psbtInput.setSigHash(SigHash.NONE);
+
+        Assertions.assertTrue(psbtInput.sign(key));
     }
 
     @Test
@@ -2493,6 +2561,35 @@ public class PSBTTest {
 
         PSBTSignatureException e = Assertions.assertThrows(PSBTSignatureException.class, () -> unfinalized.verifyFinalizedSignatures(finalized));
         Assertions.assertEquals("Input 0 is not finalized by the provided PSBT", e.getMessage());
+    }
+
+    @Test
+    public void silentPaymentSighashRefusedBeforeAnyInputIsSigned() throws Exception {
+        Wallet wallet = buildSigningWallet();
+        WalletNode addressNode = wallet.getNode(KeyPurpose.RECEIVE).getChildren().iterator().next();
+        Script outputScript = wallet.getOutputScript(addressNode);
+
+        Transaction funding = new Transaction();
+        funding.addInput(Sha256Hash.ZERO_HASH, 0, new Script(new byte[0]));
+        funding.addOutput(100000, outputScript);
+        funding.addOutput(100000, outputScript);
+        wallet.updateTransactions(Map.of(funding.getTxId(), new BlockTransaction(funding.getTxId(), 800000, new Date(), 0L, funding)));
+
+        Transaction spend = new Transaction();
+        spend.setVersion(2);
+        spend.addInput(funding.getTxId(), 0, new Script(new byte[0]));
+        spend.addInput(funding.getTxId(), 1, new Script(new byte[0]));
+        spend.addOutput(190000, new Script(new byte[0]));
+
+        PSBT psbt = new PSBT(spend);
+        psbt.getPsbtOutputs().getFirst().setSilentPaymentAddress(SilentPaymentAddress.from("sp1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqjuexzk6murw56suy3e0rd2cgqvycxttddwsvgxe2usfpxumr70xc9pkqwv"));
+        psbt.getPsbtInputs().get(0).setWitnessUtxo(funding.getOutputs().get(0));
+        psbt.getPsbtInputs().get(0).setSigHash(SigHash.ALL);
+        psbt.getPsbtInputs().get(1).setWitnessUtxo(funding.getOutputs().get(1));
+        psbt.getPsbtInputs().get(1).setSigHash(SigHash.NONE);
+
+        Assertions.assertThrows(IllegalStateException.class, () -> wallet.sign(psbt));
+        Assertions.assertTrue(psbt.getPsbtInputs().stream().allMatch(psbtInput -> psbtInput.getPartialSignatures().isEmpty()));
     }
 
     @Test
